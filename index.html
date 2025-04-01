@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, user-scalable=no">
+        <script src="https://bundle.run/noble-secp256k1@1.2.14"></script>
+        <script src="https://bundle.run/browserify-cipher@1.0.1"></script>
+        <script src="https://supertestnet.github.io/bankify/super_nostr.js"></script>
+        <style>
+            * {
+                box-sizing: border-box;
+                font-size: 1.15rem;
+                font-family: Arial, sans-serif;
+            }
+            html {
+                max-width: 800px;
+                padding: 3rem 1rem;
+                margin: auto;
+                line-height: 1.25;
+                padding: 0;
+            }
+            body {
+                margin: 3rem 1rem;
+                word-wrap: break-word;
+            }
+            h1 {
+                font-size: 2rem;
+            }
+            h2 {
+                font-size: 1.5rem;
+            }
+            input {
+                line-height: 1.25;
+                width: 100%;
+                height: 1.8rem;
+                font-size: 1.15rem;
+                border: 1px solid grey;
+            }
+            .hidden {
+                display: none !important;
+            }
+            .event_maker {
+                border: 1px solid black;
+                border-radius: 1rem;
+                padding: 1rem;
+            }
+            .day_tab {
+                border: 1px solid black;
+                border-bottom: 0;
+                display: inline-block;
+                padding: 0 0.5rem;
+                background-color: #cccccc;
+                cursor: pointer;
+            }
+            .active_day {
+                background-color: yellow;
+            }
+            .time_slots {
+                border: 1px solid black;
+                border-radius: 0 1rem 1rem 1rem;
+                padding: 1rem;
+            }
+            .time_slot {
+                border: 1px solid black;
+                border-bottom: 0;
+            }
+            .time_slot:last-child {
+                border-bottom: 1px solid black;
+            }
+            .time_of_shift {
+                width: 7rem;
+                text-align: center;
+                border-right: 1px solid black;
+                display: inline-block;
+            }
+            .person_on_shift {
+                display: inline-flex;
+                width: calc( 100% - 8rem );
+                justify-content: center;
+            }
+            .spacer {
+                width: 2rem;
+            }
+            .day_desc_div {
+                margin-bottom: 1rem;
+            }
+            @media screen and (max-width: 600px) {
+            }
+        </style>
+        <style>
+            .black-bg {
+                width: 100%;
+                position: fixed;
+                top: 0;
+                left: 0;
+                background-color: black;
+                opacity: .5;
+                width: 100vw;
+                height: 100vh;
+            }
+            .modal {
+                position: fixed;
+                box-sizing: border-box;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%,-50%);
+                width: 90%;
+                max-width: 560px;
+                background-color: white;
+                border-radius: 1rem;
+                padding: 20px;
+                color: black;
+                text-align: center;
+                word-wrap: break-word;
+            }
+            .modal * {
+                color: black;
+            }
+            .modal input, .modal textarea {
+                max-width: 90%;
+            }
+        </style>
+        <script>
+            var modalVanish = () => {
+                $( ".black-bg" ).classList.add( "hidden" );
+                $( ".modal" ).classList.add( "hidden" );
+            }
+            var showModal = content => {
+                $( ".modal" ).innerHTML = `<div class="x_modal" style="position: absolute;right: 1rem;top: 0.5rem;font-size: 2rem; cursor: pointer; color: black;" onclick="modalVanish()">&times;</div>`;
+                $( ".modal" ).innerHTML += `<div style="overflow-y: auto; max-height: 80vh; margin-top: 1.5rem;">${content}</div>`;
+                $( ".black-bg" ).classList.remove( "hidden" );
+                $( ".modal" ).classList.remove( "hidden" );
+            }
+        </script>
+        <script>
+            var $ = document.querySelector.bind( document );
+            var $$ = document.querySelectorAll.bind( document );
+            var url_params = new URLSearchParams( window.location.search );
+            var url_keys = url_params.keys();
+            var $_GET = {}
+            for ( var key of url_keys ) $_GET[ key ] = url_params.get( key );
+            var hash_arr = window.location.href.substring( window.location.href.indexOf( "#" ) ).split( "#" );
+            hash_arr.splice( 0, 1 );
+            var params = {}
+            hash_arr.forEach( item => {
+                var vals = item.split( "=" );
+                params[ vals[ 0 ] ] = vals[ 1 ];
+            });
+        </script>
+    </head>
+    <body>
+        <div class="home">
+            <h1>Expeditus</h1>
+            <p>Scheduling software based on nostr</p>
+            <div class="event_maker">
+                <p>Name your event</p>
+                <p><input class="event_name"></p>
+                <p>How many days?</p>
+                <p><input class="event_days" type="number" min="1" step="1" value="1"></p>
+                <p>How long is each shift?</p>
+                <select class="shift_length">
+                    <option>--- Select ---</option>
+                    <option>15 minutes</option>
+                    <option>30 minutes</option>
+                    <option>1 hour</option>
+                    <option>2 hours</option>
+                    <option>3 hours</option>
+                    <option>4 hours</option>
+                    <option>6 hours</option>
+                    <option>8 hours</option>
+                    <option>12 hours</option>
+                </select>
+                <p><button class="next_step">Next step</button></p>
+            </div>
+        </div>
+        <div class="editable_event hidden">
+            <h1 class="displayed_event_name">Loading...</h1>
+            <p class="displayed_event_desc"></p>
+            <p class="sharable_link"><button class="share_this_event">Share this event</button></p>
+            <div class="day_tabs"></div>
+            <div class="time_slots"></div>
+        </div>
+        <script>
+            var relay = "wss://nostrue.com";
+            var event_info = {}
+            var showPage = page => {
+                $( '.home' ).classList.add( "hidden" );
+                $( '.editable_event' ).classList.add( "hidden" );
+                $( `.${page}` ).classList.remove( "hidden" );
+            }
+            $( '.next_step' ).onclick = async () => {
+                var event_name = $( '.event_name' ).value;
+                var event_days = Number( $( '.event_days' ).value );
+                var shift_length = $( '.shift_length' ).value;
+                if ( !event_name ) return alert( `you forgot to name your event` );
+                if ( !event_days || String( event_days ).includes( "." ) || String( event_days ).includes( "," ) ) return alert( `you did not put a valid integer for number of days` );
+                if ( !shift_length || shift_length === `--- Select ---` ) return alert( `you did not select a shift length` );
+                var day_descriptions = [];
+                var time_slots = [];
+                var event_description = null;
+                var i; for ( i=0; i<event_days; i++ ) {
+                    day_descriptions.push( null );
+                    time_slots.push( {} );
+                }
+                event_info = {
+                    event_name,
+                    event_description,
+                    event_days,
+                    shift_length,
+                    day_descriptions,
+                    time_slots,
+                }
+                var privkey = super_nostr.getPrivkey();
+                var pubkey = super_nostr.getPubkey( privkey );
+                var event_id = pubkey;
+                var tags = [ [ "e", event_id ] ];
+                var event = await super_nostr.prepEvent( privkey, JSON.stringify( event_info ), 12978, tags );
+                super_nostr.sendEvent( event, relay );
+                var url = window.location.protocol + "//" + window.location.hostname + window.location.pathname + "#privkey=" + privkey;
+                var html = `
+                    <p>Visit <a href="${url}" onclick="showTimeslots();">this link</a> to continue</p>
+                `;
+                showModal( html );
+            }
+            var showTimeslots = async () => {
+                showModal( 'loading...' );
+                showPage( 'editable_event' );
+                await super_nostr.waitSomeSeconds( 1 );
+                var hash_arr = window.location.href.substring( window.location.href.indexOf( "#" ) ).split( "#" );
+                hash_arr.splice( 0, 1 );
+                params = {}
+                hash_arr.forEach( item => {
+                    var vals = item.split( "=" );
+                    params[ vals[ 0 ] ] = vals[ 1 ];
+                });
+                if ( params.hasOwnProperty( "privkey" ) ) var pubkey = super_nostr.getPubkey( params.privkey );
+                else var pubkey = $_GET[ "event" ];
+                var ids = null;
+                var authors = null;
+                var kinds = [ 12978 ];
+                var until = null;
+                var since = null;
+                var limit = null;
+                var event_id = params.hasOwnProperty( "privkey" ) ? super_nostr.getPubkey( params.privkey ) : $_GET[ "event" ];
+                var etags = [ event_id ];
+                var events = await super_nostr.getEvents( relay, ids, authors, kinds, until, since, limit, etags );
+                modalVanish();
+                if ( !events.length ) return alert( `there was an error loading your event. Please refresh the page or try again by making a new event.` );
+                var event;
+                events.forEach( ( item, index ) => {
+                    if ( item.pubkey === pubkey ) {
+                        event = item;
+                        delete events[ index ];
+                    }
+                });
+                event_info = JSON.parse( event.content );
+                events.forEach( item => {
+                    try {
+                        var day = Number( Object.keys( JSON.parse( item.content ) )[ 0 ] );
+                        var time = Object.keys( JSON.parse( item.content )[ day ] )[ 0 ];
+                        if ( !event_info.time_slots.hasOwnProperty( day ) ) return;
+                        if ( event_info.time_slots[ day ].hasOwnProperty( time ) ) return; 
+                        if ( !JSON.parse( item.content )[ day ][ time ].hasOwnProperty( "public_info" ) ) return;
+                        var public_info = JSON.parse( item.content )[ day ][ time ][ "public_info" ];
+                        if ( public_info.length > 25 ) return;
+                        if ( !JSON.parse( item.content )[ day ][ time ].hasOwnProperty( "hidden" ) ) return;
+                        if ( JSON.parse( item.content )[ day ][ time ][ "hidden" ] ) return;
+                        event_info.time_slots[ day ][ time ] = JSON.parse( item.content )[ day ][ time ];
+                    } catch ( e ) {}
+                })
+                $( '.displayed_event_name' ).innerText = `Event: ${event_info.event_name}`;
+                var day_tabs_html = ``;
+                var i; for ( i=0; i<event_info.event_days; i++ ) {
+                    day_tabs_html += `
+                        <div class="day_tab">Day ${i+1}</div>
+                    `;
+                }
+                $( '.day_tabs' ).innerHTML = day_tabs_html;
+                if ( event_info.shift_length === `15 minutes` ) var num_of_slots = 96;
+                if ( event_info.shift_length === `30 minutes` ) var num_of_slots = 48;
+                if ( event_info.shift_length === `1 hour` ) var num_of_slots = 24;
+                if ( event_info.shift_length === `2 hours` ) var num_of_slots = 12;
+                if ( event_info.shift_length === `3 hours` ) var num_of_slots = 8;
+                if ( event_info.shift_length === `4 hours` ) var num_of_slots = 6;
+                if ( event_info.shift_length === `6 hours` ) var num_of_slots = 4;
+                if ( event_info.shift_length === `8 hours` ) var num_of_slots = 3;
+                if ( event_info.shift_length === `12 hours` ) var num_of_slots = 2;
+                if ( params.privkey ) {
+                    var time_slots_html = `<div class="day_desc_div">Day description: <span class="day_desc"></span> <button class="edit_day_desc">Click to edit</button></div>`;
+                } else {
+                    var time_slots_html = `<div class="day_desc_div">Day description: <span class="day_desc"></span></div>`;
+                }
+                var increment_by = 0;
+                var AM_or_PM = "AM";
+                var i; for ( i=0; i<num_of_slots; i++ ) {
+                    var first_part = 12;
+                    if ( num_of_slots === 96 ) {
+                        var last_part = "00";
+                        if ( i % 4 === 1 ) last_part = "15";
+                        if ( i % 4 === 2 ) last_part = "30";
+                        if ( i % 4 === 3 ) last_part = "45";
+                        if ( i && i % 4 === 0 ) increment_by = increment_by + 1;
+                        var first_part = ( first_part + increment_by ) % 12;
+                        if ( !first_part ) first_part = 12;
+                        if ( i >= 48 ) AM_or_PM = "PM";
+                    }
+                    if ( num_of_slots === 48 ) {
+                        var last_part = "00";
+                        if ( i % 2 === 1 ) last_part = "30";
+                        if ( i && i % 2 === 0 ) increment_by = increment_by + 1;
+                        var first_part = ( first_part + increment_by ) % 12;
+                        if ( !first_part ) first_part = 12;
+                        if ( i >= 24 ) AM_or_PM = "PM";
+                    }
+                    if ( num_of_slots === 24 ) {
+                        var last_part = "00";
+                        if ( i ) increment_by = increment_by + 1;
+                        var first_part = ( first_part + increment_by ) % 12;
+                        if ( !first_part ) first_part = 12;
+                        if ( i >= 12 ) AM_or_PM = "PM";
+                    }
+                    if ( num_of_slots === 12 ) {
+                        var last_part = "00";
+                        if ( i ) increment_by = increment_by + 2;
+                        var first_part = ( first_part + increment_by ) % 12;
+                        if ( !first_part ) first_part = 12;
+                        if ( i >= 6 ) AM_or_PM = "PM";
+                    }
+                    if ( num_of_slots === 8 ) {
+                        var last_part = "00";
+                        if ( i ) increment_by = increment_by + 3;
+                        var first_part = ( first_part + increment_by ) % 12;
+                        if ( !first_part ) first_part = 12;
+                        if ( i >= 4 ) AM_or_PM = "PM";
+                    }
+                    if ( num_of_slots === 6 ) {
+                        var last_part = "00";
+                        if ( i ) increment_by = increment_by + 4;
+                        var first_part = ( first_part + increment_by ) % 12;
+                        if ( !first_part ) first_part = 12;
+                        if ( i >= 3 ) AM_or_PM = "PM";
+                    }
+                    if ( num_of_slots === 4 ) {
+                        var last_part = "00";
+                        if ( i ) increment_by = increment_by + 6;
+                        var first_part = ( first_part + increment_by ) % 12;
+                        if ( !first_part ) first_part = 12;
+                        if ( i >= 2 ) AM_or_PM = "PM";
+                    }
+                    if ( num_of_slots === 3 ) {
+                        var last_part = "00";
+                        if ( i ) increment_by = increment_by + 8;
+                        var first_part = ( first_part + increment_by ) % 12;
+                        if ( !first_part ) first_part = 12;
+                        if ( i >= 2 ) AM_or_PM = "PM";
+                    }
+                    if ( num_of_slots === 2 ) {
+                        var last_part = "00";
+                        if ( i ) increment_by = increment_by + 12;
+                        var first_part = ( first_part + increment_by ) % 12;
+                        if ( !first_part ) first_part = 12;
+                        if ( i >= 1 ) AM_or_PM = "PM";
+                    }
+                    var time_to_show = `${first_part}:${last_part} ${AM_or_PM}`;
+                    time_slots_html += `
+                        <div class="time_slot">
+                            <div class="time_of_shift">${time_to_show}</div>
+                            <div class="person_on_shift ${time_to_show.replaceAll( " ", "_" ).replaceAll( ":", "_" )}"></div>
+                        </div>
+                    `;
+                }
+                $( '.time_slots' ).innerHTML = time_slots_html;
+                showDay( 0 );
+            }
+            if ( params[ "privkey" ] || $_GET.hasOwnProperty( "event" ) ) window.onload = showTimeslots;
+            var showDay = day => {
+                if ( params[ "privkey" ] ) {
+                    $( '.displayed_event_desc' ).innerHTML = `Description: ${event_info.event_description || `None`} <button class="edit_desc">Click to edit</button>`;
+                } else {
+                    $( '.displayed_event_desc' ).innerHTML = `Description: ${event_info.event_description || `None`}`;
+                }
+                $$( '.day_tab' ).forEach( item => item.classList.remove( "active_day" ) );
+                $$( '.day_tab' )[ day ].classList.add( "active_day" );
+                $( '.day_desc' ).innerText = event_info.day_descriptions[ day ] || `None`;
+                $$( '.person_on_shift' ).forEach( item => {
+                    if ( event_info.time_slots[ day ].hasOwnProperty( item.classList[ 1 ] ) ) {
+                        if ( params[ "privkey" ] ) {
+                            var details_to_show = event_info.time_slots[ day ][ item.classList[ 1 ] ][ "public_info" ] + `<div class="spacer"></div><button class="fill_btn">Edit</button>`;
+                        } else {
+                            var details_to_show = event_info.time_slots[ day ][ item.classList[ 1 ] ][ "public_info" ];
+                        }
+                        if ( event_info.time_slots[ day ][ item.classList[ 1 ] ][ "hidden" ] ) item.parentElement.classList.add( "hidden" );
+                    } else {
+                        var details_to_show = `<button class="fill_btn">Fill</button>`;
+                        item.parentElement.classList.remove( "hidden" );
+                    }
+                    if ( params[ "privkey" ] ) {
+                        item.innerHTML = `${details_to_show}<div class="spacer"></div><button class="hide_btn">Hide</button>`;
+                    } else {
+                        item.innerHTML = `${details_to_show}`;
+                    }
+                });
+                $$( '.fill_btn' ).forEach( item => item.onclick = async e => {
+                    var time = e.target.parentElement.previousElementSibling.innerText;
+                    var day_string = $( '.active_day' ).innerText;
+                    var day = Number( day_string.substring( day_string.indexOf( " " ) + 1 ) ) - 1;
+                    if ( params.hasOwnProperty( "privkey" ) ) {
+                        var name = prompt( `Enter the name of the person filling this slot` );
+                    } else {
+                        var name = prompt( `Enter your name` );
+                        if ( name.length > 25 ) return alert( `your name was too long, it must be under 25 characters. Try again` );
+
+                    }
+                    if ( !name ) return alert( `you forgot to enter a name, try again` );
+                    var adjusted_time = time.replaceAll( " ", "_" ).replaceAll( ":", "_" );
+                    if ( params.hasOwnProperty( "privkey" ) ) {
+                        event_info.time_slots[ day ][ adjusted_time ] = { public_info: name, private_info: null, hidden: false }
+                        var info_to_share = JSON.stringify( event_info );
+                    } else {
+                        var obj = {}
+                        obj[ day ] = {}
+                        obj[ day ][ adjusted_time ] = { public_info: name, private_info: null, hidden: false }
+                        event_info.time_slots[ day ][ adjusted_time ] = { public_info: name, private_info: null, hidden: false }
+                        var info_to_share = JSON.stringify( obj );
+                    }
+                    showDay( day );
+                    var privkey = params.hasOwnProperty( "privkey" ) ? params.privkey : super_nostr.getPrivkey();
+                    var event_id = params.hasOwnProperty( "privkey" ) ? super_nostr.getPubkey( params.privkey ) : $_GET[ "event" ];
+                    var tags = [ [ "e", event_id ] ];
+                    var event = await super_nostr.prepEvent( privkey, info_to_share, 12978, tags );
+                    super_nostr.sendEvent( event, relay );
+                });
+                $$( '.hide_btn' ).forEach( item => item.onclick = async e => {
+                    var time = e.target.parentElement.previousElementSibling.innerText;
+                    var day_string = $( '.active_day' ).innerText;
+                    var day = Number( day_string.substring( day_string.indexOf( " " ) + 1 ) ) - 1;
+                    var conf = confirm( `are you sure you want to hide time slot ${time} of ${day_string}?` );
+                    if ( !conf ) return;
+                    var adjusted_time = time.replaceAll( " ", "_" ).replaceAll( ":", "_" );
+                    event_info.time_slots[ day ][ adjusted_time ] = { public_info: null, private_info: null, hidden: true }
+                    showDay( day );
+                    var privkey = params.privkey;
+                    var event_id = params.hasOwnProperty( "privkey" ) ? super_nostr.getPubkey( params.privkey ) : $_GET[ "event" ];
+                    var tags = [ [ "e", event_id ] ];
+                    var event = await super_nostr.prepEvent( privkey, JSON.stringify( event_info ), 12978, tags );
+                    super_nostr.sendEvent( event, relay );
+                });
+                $$( '.day_tab' ).forEach( item => item.onclick = async e => {
+                    var day_string = e.target.innerText;
+                    var day = Number( day_string.substring( day_string.indexOf( " " ) + 1 ) ) - 1;
+                    showDay( day );
+                });
+                if ( $( '.edit_desc' ) ) $( '.edit_desc' ).onclick = async () => {
+                    var new_desc = prompt( `enter your new event description` );
+                    if ( !new_desc ) return alert( `you forgot to enter an event description, please try again` );
+                    var day_string = $( '.active_day' ).innerText;
+                    var day = Number( day_string.substring( day_string.indexOf( " " ) + 1 ) ) - 1;
+                    event_info.event_description = new_desc;
+                    showDay( day );
+                    var privkey = params.privkey;
+                    var event_id = params.hasOwnProperty( "privkey" ) ? super_nostr.getPubkey( params.privkey ) : $_GET[ "event" ];
+                    var tags = [ [ "e", event_id ] ];
+                    var event = await super_nostr.prepEvent( privkey, JSON.stringify( event_info ), 12978, tags );
+                    super_nostr.sendEvent( event, relay );
+                }
+                if ( $( '.edit_day_desc' ) ) $( '.edit_day_desc' ).onclick = async () => {
+                    var new_desc = prompt( `enter your new day description` );
+                    if ( !new_desc ) return alert( `you forgot to enter a day description, please try again` );
+                    var day_string = $( '.active_day' ).innerText;
+                    var day = Number( day_string.substring( day_string.indexOf( " " ) + 1 ) ) - 1;
+                    event_info.day_descriptions[ day ] = new_desc;
+                    showDay( day );
+                    var privkey = params.privkey;
+                    var event_id = params.hasOwnProperty( "privkey" ) ? super_nostr.getPubkey( params.privkey ) : $_GET[ "event" ];
+                    var tags = [ [ "e", event_id ] ];
+                    var event = await super_nostr.prepEvent( privkey, JSON.stringify( event_info ), 12978, tags );
+                    super_nostr.sendEvent( event, relay );
+                }
+                $( '.share_this_event' ).onclick = async () => {
+                    if ( params.hasOwnProperty( "privkey" ) ) var privkey = params.privkey;
+                    var pubkey = params.hasOwnProperty( "privkey" ) ? super_nostr.getPubkey( privkey ) : $_GET[ "event" ];
+                    var url = window.location.protocol + "//" + window.location.hostname + window.location.pathname + "?event=" + pubkey;
+                    var html = `
+                        <p>Share this link:</p>
+                        <p><a href="${url}" target="_blank">${url}</a></p>
+                    `;
+                    showModal( html );
+                }
+            }
+        </script>
+        <div class="black-bg hidden" onclick="modalVanish();"></div>
+        <div class="modal hidden"></div>
+    </body>
+</html>
