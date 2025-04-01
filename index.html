@@ -238,11 +238,11 @@
                 super_nostr.sendEvent( event, relay );
                 var url = window.location.protocol + "//" + window.location.hostname + window.location.pathname + "#privkey=" + privkey;
                 var html = `
-                    <p>Visit <a href="${url}" onclick="showTimeslots();">this link</a> to continue</p>
+                    <p>Visit <a href="${url}" onclick="showDayTabs();">this link</a> to continue</p>
                 `;
                 showModal( html );
             }
-            var showTimeslots = async () => {
+            var showDayTabs = async () => {
                 showModal( 'loading...' );
                 showPage( 'editable_event' );
                 await super_nostr.waitSomeSeconds( 1 );
@@ -296,6 +296,10 @@
                     `;
                 }
                 $( '.day_tabs' ).innerHTML = day_tabs_html;
+                showDay( 0 );
+            }
+            if ( params[ "privkey" ] || $_GET.hasOwnProperty( "event" ) ) window.onload = showDayTabs;
+            var showDay = day => {
                 if ( event_info.shift_length === `15 minutes` ) var num_of_slots = 96;
                 if ( event_info.shift_length === `30 minutes` ) var num_of_slots = 48;
                 if ( event_info.shift_length === `1 hour` ) var num_of_slots = 24;
@@ -390,10 +394,6 @@
                     `;
                 }
                 $( '.time_slots' ).innerHTML = time_slots_html;
-                showDay( 0 );
-            }
-            if ( params[ "privkey" ] || $_GET.hasOwnProperty( "event" ) ) window.onload = showTimeslots;
-            var showDay = day => {
                 if ( params[ "privkey" ] ) {
                     $( '.displayed_event_desc' ).innerHTML = `Description: ${event_info.event_description || `None`} <button class="edit_desc">Click to edit</button>`;
                 } else {
@@ -409,7 +409,7 @@
                         } else {
                             var details_to_show = event_info.time_slots[ day ][ item.classList[ 1 ] ][ "public_info" ];
                         }
-                        if ( event_info.time_slots[ day ][ item.classList[ 1 ] ][ "hidden" ] ) item.parentElement.classList.add( "hidden" );
+                        if ( event_info.time_slots[ day ][ item.classList[ 1 ] ][ "hidden" ] ) item.parentElement.remove();
                     } else {
                         var details_to_show = `<button class="fill_btn">Fill</button>`;
                         item.parentElement.classList.remove( "hidden" );
